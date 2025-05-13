@@ -49,6 +49,19 @@ def init_db():
         )
     ''')
     
+    # Insert default tellers if they don't exist
+    c.execute('SELECT COUNT(*) FROM tellers')
+    if c.fetchone()[0] == 0:
+        default_tellers = [
+            ('1', 'Jean Bosco', 'available', 0, 'international-transfer,forex'),
+            ('2', 'Marie Claire', 'available', 0, 'international-transfer,domestic-transfer'),
+            ('3', 'Emmanuel', 'available', 0, 'domestic-transfer,account-services')
+        ]
+        c.executemany(
+            'INSERT INTO tellers (id, name, status, customers_served, service_types) VALUES (?, ?, ?, ?, ?)',
+            default_tellers
+        )
+    
     # Create feedback table
     c.execute('''
         CREATE TABLE IF NOT EXISTS feedback (
@@ -147,7 +160,12 @@ async def get_customers():
     c = conn.cursor()
     
     try:
-        c.execute("SELECT * FROM customers WHERE DATE(check_in_time) = DATE('now')")
+        c.execute('''
+            SELECT c.*, t.name as teller_name 
+            FROM customers c 
+            LEFT JOIN tellers t ON c.teller_id = t.id 
+            WHERE DATE(c.check_in_time) = DATE('now')
+        ''')
         customers = c.fetchall()
         
         return [dict(customer) for customer in customers]
@@ -161,6 +179,11 @@ async def update_customer_status(customer_id: str, update: CustomerStatusUpdate)
     c = conn.cursor()
     
     try:
+        # First check if customer exists
+        c.execute("SELECT id FROM customers WHERE id = ?", (customer_id,))
+        if not c.fetchone():
+            raise HTTPException(status_code=404, detail="Customer not found")
+        
         now = datetime.now()
         
         if update.status == 'serving':
@@ -169,21 +192,33 @@ async def update_customer_status(customer_id: str, update: CustomerStatusUpdate)
                 SET status = ?, start_service_time = ?, teller_id = ?
                 WHERE id = ?
             ''', (update.status, now, update.teller_id, customer_id))
+            
+            if update.teller_id:
+                c.execute('''
+                    UPDATE tellers 
+                    SET status = 'serving'
+                    WHERE id = ?
+                ''', (update.teller_id,))
+                
         elif update.status in ['completed', 'cancelled']:
             c.execute('''
                 UPDATE customers 
                 SET status = ?, end_service_time = ?
                 WHERE id = ?
             ''', (update.status, now, customer_id))
+            
+            if update.status == 'completed':
+                c.execute('''
+                    UPDATE tellers 
+                    SET status = 'available', customers_served = customers_served + 1
+                    WHERE id = (SELECT teller_id FROM customers WHERE id = ?)
+                ''', (customer_id,))
         else:
             c.execute('''
                 UPDATE customers 
                 SET status = ?
                 WHERE id = ?
             ''', (update.status, customer_id))
-        
-        if c.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Customer not found")
         
         conn.commit()
         return {"message": "Status updated successfully"}
