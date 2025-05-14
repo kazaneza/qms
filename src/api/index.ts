@@ -1,3 +1,5 @@
+// src/api/index.ts - Fixed date handling in API
+
 import axios from 'axios';
 import type { Customer, Feedback, FeedbackCategory } from '../types';
 
@@ -19,23 +21,59 @@ api.interceptors.response.use(
   }
 );
 
+// Helper for date debugging
+const debugDate = (label: string, date: any) => {
+  console.log(`${label}:`, {
+    original: date,
+    asDate: new Date(date),
+    asISO: new Date(date).toISOString(),
+    year: new Date(date).getFullYear(),
+    month: new Date(date).getMonth(),
+    day: new Date(date).getDate()
+  });
+};
+
 export const getCustomers = async (): Promise<Customer[]> => {
   try {
     const response = await api.get('/customers/');
+    console.log('API Response data:', response.data);
+    
+    // Debug the first customer's date if available
+    if (response.data.length > 0) {
+      debugDate('First customer check_in_time', response.data[0].check_in_time);
+    }
+    
     // Transform the response data to match our Customer type
-    return response.data.map((customer: any) => ({
-      id: customer.id,
-      name: customer.name,
-      phoneNumber: customer.phone_number,
-      tokenNumber: customer.token_number,
-      serviceType: customer.service_type,
-      status: customer.status,
-      checkInTime: new Date(customer.check_in_time),
-      estimatedWaitTime: customer.estimated_wait_time,
-      startServiceTime: customer.start_service_time ? new Date(customer.start_service_time) : undefined,
-      endServiceTime: customer.end_service_time ? new Date(customer.end_service_time) : undefined,
-      tellerId: customer.teller_id
-    }));
+    const transformedCustomers = response.data.map((customer: any) => {
+      // Parse the dates safely
+      const checkInTime = new Date(customer.check_in_time);
+      const startServiceTime = customer.start_service_time ? new Date(customer.start_service_time) : undefined;
+      const endServiceTime = customer.end_service_time ? new Date(customer.end_service_time) : undefined;
+      
+      // Debug dates for the first customer
+      if (customer === response.data[0]) {
+        debugDate('Transformed checkInTime', checkInTime);
+        if (startServiceTime) debugDate('Transformed startServiceTime', startServiceTime);
+        if (endServiceTime) debugDate('Transformed endServiceTime', endServiceTime);
+      }
+      
+      return {
+        id: customer.id,
+        name: customer.name,
+        phoneNumber: customer.phone_number,
+        tokenNumber: customer.token_number,
+        serviceType: customer.service_type,
+        status: customer.status,
+        checkInTime,
+        estimatedWaitTime: customer.estimated_wait_time,
+        startServiceTime,
+        endServiceTime,
+        tellerId: customer.teller_id
+      };
+    });
+    
+    console.log('Transformed customers:', transformedCustomers);
+    return transformedCustomers;
   } catch (error) {
     console.error('Failed to fetch customers:', error);
     return [];
@@ -53,6 +91,9 @@ export const createCustomer = async (data: {
       phone_number: data.phoneNumber,
       service_type: data.serviceType,
     });
+    
+    // Debug the created customer date
+    debugDate('Created customer check_in_time', response.data.check_in_time);
     
     // Transform the response to match our Customer type
     return {

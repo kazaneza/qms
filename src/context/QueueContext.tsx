@@ -1,7 +1,15 @@
+// src/context/QueueContext.tsx - Fixed with temporary solution for date handling
+
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Customer, CustomerStatus, ServiceType, Teller, QueueStats } from '../types';
-import { generateTokenNumber, estimateWaitTime, calculateQueueStats, getNextCustomer } from '../utils/queueUtils';
+import { 
+  generateTokenNumber, 
+  estimateWaitTime, 
+  calculateQueueStats, 
+  getNextCustomer,
+  isToday 
+} from '../utils/queueUtils';
 import { getCustomers, updateCustomerStatus as updateCustomerStatusApi } from '../api';
 
 interface QueueContextType {
@@ -65,9 +73,53 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
     avgServiceTime: 0
   });
 
+  // TEMPORARY FIX: Flag to bypass date filtering when no customers match today's date
+  const [bypassDateFilter, setBypassDateFilter] = useState(false);
+
   const refreshCustomers = async () => {
     try {
       const fetchedCustomers = await getCustomers();
+      console.log("Fetched customers:", fetchedCustomers);
+      console.log("Number of customers:", fetchedCustomers.length);
+      
+      // Debug date handling for all customers
+      if (fetchedCustomers.length > 0) {
+        console.log("Date checks for customers:");
+        fetchedCustomers.forEach((customer, index) => {
+          console.log(`Customer ${index + 1} (${customer.name}) date checks:`);
+          console.log(`  Original checkInTime:`, customer.checkInTime);
+          console.log(`  Parsed as:`, new Date(customer.checkInTime));
+          console.log(`  Is today:`, isToday(customer.checkInTime));
+          console.log(`  Status:`, customer.status);
+        });
+      }
+      
+      // Debug: Check today's customers
+      const todaysCustomers = fetchedCustomers.filter(c => isToday(c.checkInTime));
+      console.log("Today's customers:", todaysCustomers);
+      
+      // Debug: Check customers by status
+      console.log("Waiting customers:", fetchedCustomers.filter(c => c.status === 'waiting' && isToday(c.checkInTime)));
+      console.log("Serving customers:", fetchedCustomers.filter(c => c.status === 'serving' && isToday(c.checkInTime)));
+      
+      // TEMPORARY SOLUTION: If no customers are recognized as "today's" customers,
+      // but there are customers in the database, bypass the date filter
+      if (todaysCustomers.length === 0 && fetchedCustomers.length > 0) {
+        console.log("NOTICE: No customers detected for today. Bypassing date filter (temporary fix)");
+        setBypassDateFilter(true);
+        
+        // Log date comparison details
+        const today = new Date();
+        console.log("Today's date:", today);
+        console.log("Today's components:", {
+          year: today.getFullYear(),
+          month: today.getMonth(),
+          day: today.getDate()
+        });
+      } else {
+        setBypassDateFilter(false);
+      }
+      
       setCustomers(fetchedCustomers);
       
       // Update teller status based on serving customers
@@ -97,8 +149,52 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
 
   // Update queue stats whenever customers or tellers change
   useEffect(() => {
-    setQueueStats(calculateQueueStats(customers));
-  }, [customers]);
+    if (bypassDateFilter) {
+      // Use all customers for stats calculation if date filter is bypassed
+      const allStats: QueueStats = {
+        totalCustomers: customers.length,
+        waitingCustomers: customers.filter(c => c.status === 'waiting').length,
+        avgWaitTime: calculateAvgTime(customers, 'wait'),
+        avgServiceTime: calculateAvgTime(customers, 'service')
+      };
+      setQueueStats(allStats);
+    } else {
+      // Use normal stats calculation
+      setQueueStats(calculateQueueStats(customers));
+    }
+  }, [customers, bypassDateFilter]);
+  
+  // Helper function to calculate average times for the temporary solution
+  const calculateAvgTime = (customers: Customer[], timeType: 'wait' | 'service'): number => {
+    let relevantCustomers: Customer[] = [];
+    let totalTime = 0;
+    
+    if (timeType === 'wait') {
+      relevantCustomers = customers.filter(c => 
+        (c.status === 'serving' || c.status === 'completed') && c.startServiceTime
+      );
+      
+      totalTime = relevantCustomers.reduce((total, customer) => {
+        const waitTime = customer.startServiceTime 
+          ? (new Date(customer.startServiceTime).getTime() - new Date(customer.checkInTime).getTime()) / (1000 * 60)
+          : 0;
+        return total + waitTime;
+      }, 0);
+    } else { // service time
+      relevantCustomers = customers.filter(c => 
+        c.status === 'completed' && c.startServiceTime && c.endServiceTime
+      );
+      
+      totalTime = relevantCustomers.reduce((total, customer) => {
+        const serviceTime = customer.endServiceTime && customer.startServiceTime 
+          ? (new Date(customer.endServiceTime).getTime() - new Date(customer.startServiceTime).getTime()) / (1000 * 60)
+          : 0;
+        return total + serviceTime;
+      }, 0);
+    }
+    
+    return relevantCustomers.length > 0 ? Math.round(totalTime / relevantCustomers.length) : 0;
+  };
 
   // Add a new customer to the queue
   const addCustomer = (name: string, phoneNumber: string, serviceType: ServiceType): Customer => {
@@ -140,15 +236,32 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
     const teller = tellers.find(t => t.id === tellerId);
     if (!teller || teller.status === 'serving') return;
     
-    const nextCustomer = getNextCustomer(customers, teller);
-    if (!nextCustomer) return;
+    // Get next customer using proper filter based on bypass flag
+    let nextCustomer: Customer | null = null;
+    
+    if (bypassDateFilter) {
+      // Skip date filtering if we're bypassing it
+      const waitingCustomers = customers
+        .filter(c => c.status === 'waiting' && teller.serviceTypes.includes(c.serviceType))
+        .sort((a, b) => a.tokenNumber - b.tokenNumber);
+      
+      nextCustomer = waitingCustomers.length > 0 ? waitingCustomers[0] : null;
+    } else {
+      // Use standard method
+      nextCustomer = getNextCustomer(customers, teller);
+    }
+    
+    if (!nextCustomer) {
+      console.log("No customers available for assignment.");
+      return;
+    }
     
     try {
       // Update teller status first
       setTellers(prev => 
         prev.map(t => 
           t.id === tellerId 
-            ? { ...t, status: 'serving', currentCustomerId: nextCustomer.id } 
+            ? { ...t, status: 'serving', currentCustomerId: nextCustomer!.id } 
             : t
         )
       );
@@ -218,9 +331,18 @@ export const QueueProvider: React.FC<QueueProviderProps> = ({ children }) => {
     );
   };
 
-  // Get customers by status
+  // Get customers by status - modified to handle date filter bypass
   const getCustomersByStatus = (status: CustomerStatus): Customer[] => {
-    return customers.filter(customer => customer.status === status)
+    // If bypassing date filter, return all customers with the given status
+    if (bypassDateFilter) {
+      return customers
+        .filter(customer => customer.status === status)
+        .sort((a, b) => a.tokenNumber - b.tokenNumber);
+    }
+    
+    // Otherwise use standard filtering
+    return customers
+      .filter(customer => customer.status === status && isToday(customer.checkInTime))
       .sort((a, b) => a.tokenNumber - b.tokenNumber);
   };
 

@@ -1,10 +1,12 @@
+// src/components/QueueDisplay.tsx - Fixed component with date filter bypass
+
 import React, { useState, useEffect } from 'react';
 import * as Lucide from 'lucide-react';
 import { useQueue } from '../context/QueueContext';
-import { formatDuration } from '../utils/queueUtils';
+import { formatDuration, formatTime, isToday } from '../utils/queueUtils';
 
 const QueueDisplay: React.FC = () => {
-  const { customers, queueStats, tellers, refreshCustomers } = useQueue();
+  const { customers, queueStats, tellers, refreshCustomers, getCustomersByStatus } = useQueue();
   const [currentTime, setCurrentTime] = useState(new Date());
   
   // Update current time every minute
@@ -25,22 +27,10 @@ const QueueDisplay: React.FC = () => {
     return () => clearInterval(interval);
   }, [refreshCustomers]);
   
-  // Get today's customers by status
-  const today = new Date().toDateString();
-  const todaysCustomers = customers.filter(
-    c => new Date(c.checkInTime).toDateString() === today
-  );
-  
-  const waitingCustomers = todaysCustomers
-    .filter(c => c.status === 'waiting')
-    .sort((a, b) => a.tokenNumber - b.tokenNumber);
-  
-  const servingCustomers = todaysCustomers
-    .filter(c => c.status === 'serving')
-    .sort((a, b) => a.tokenNumber - b.tokenNumber);
-  
-  const completedCustomers = todaysCustomers
-    .filter(c => c.status === 'completed')
+  // Get customers by status using the context method (handles date bypass)
+  const waitingCustomers = getCustomersByStatus('waiting');
+  const servingCustomers = getCustomersByStatus('serving');
+  const completedCustomers = getCustomersByStatus('completed')
     .sort((a, b) => b.tokenNumber - a.tokenNumber)
     .slice(0, 5); // Show only last 5 completed
   
@@ -59,6 +49,12 @@ const QueueDisplay: React.FC = () => {
     const teller = tellers.find(t => t.id === tellerId);
     return teller ? teller.name : 'Unknown';
   };
+  
+  // Debug logging to check customer data
+  console.log("QueueDisplay - All customers:", customers);
+  console.log("QueueDisplay - Waiting customers:", waitingCustomers);
+  console.log("QueueDisplay - Serving customers:", servingCustomers);
+  console.log("QueueDisplay - Completed customers:", completedCustomers);
   
   return (
     <div className="bg-white rounded-lg shadow-even overflow-hidden">
@@ -251,10 +247,7 @@ const QueueDisplay: React.FC = () => {
                         </span>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-bkNeutral-600">
-                        {customer.endServiceTime?.toLocaleTimeString([], { 
-                          hour: '2-digit', 
-                          minute: '2-digit' 
-                        })}
+                        {customer.endServiceTime ? formatTime(customer.endServiceTime) : ''}
                       </td>
                     </tr>
                   ))}
