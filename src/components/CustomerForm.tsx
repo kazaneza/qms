@@ -36,35 +36,40 @@ const CustomerForm: React.FC<CustomerFormProps> = ({ onSuccess }) => {
   const validateForm = (): boolean => {
     let valid = true;
     const newErrors = { name: '', phoneNumber: '' };
-    
+
     if (!formData.name.trim()) {
       newErrors.name = 'Name is required';
       valid = false;
     }
-    
-    if (!formData.phoneNumber.trim()) {
+
+    // Remove spaces before validation
+    const cleanedPhone = formData.phoneNumber.replace(/\s+/g, '');
+
+    if (!cleanedPhone) {
       newErrors.phoneNumber = 'Phone number is required';
       valid = false;
-    } else if (!/^(07\d{8})$/.test(formData.phoneNumber)) {
+    } else if (!/^(07\d{8})$/.test(cleanedPhone)) {
       newErrors.phoneNumber = 'Please enter a valid Rwanda phone number (e.g., 0712345678)';
       valid = false;
     }
-    
+
     setErrors(newErrors);
     return valid;
   };
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!validateForm()) return;
-    
+
     setIsSubmitting(true);
-    
+
     try {
+      // Clean phone number before sending to backend
+      const cleanedPhone = formData.phoneNumber.replace(/\s+/g, '');
       const customer = await createCustomer({
         name: formData.name,
-        phoneNumber: formData.phoneNumber,
+        phoneNumber: cleanedPhone,
         serviceType: formData.serviceType
       });
       

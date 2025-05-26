@@ -3,7 +3,7 @@
 import axios from 'axios';
 import type { Customer, Feedback, FeedbackCategory } from '../types';
 
-const API_URL = 'http://localhost:8700';
+const API_URL = 'https://qms-backend-production-8eaa.up.railway.app/';
 
 const api = axios.create({
   baseURL: API_URL,

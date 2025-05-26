@@ -115,6 +115,8 @@ async def create_customer(customer: CustomerBase):
     c = conn.cursor()
     
     try:
+        # Remove spaces from phone number
+        cleaned_phone = customer.phone_number.replace(" ", "")
         # Generate token number
         c.execute("SELECT MAX(token_number) FROM customers WHERE DATE(check_in_time) = DATE('now')")
         max_token = c.fetchone()[0]
@@ -132,7 +134,7 @@ async def create_customer(customer: CustomerBase):
                 status, check_in_time, estimated_wait_time
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            customer_id, customer.name, customer.phone_number,
+            customer_id, customer.name, cleaned_phone,
             token_number, customer.service_type, 'waiting',
             now, estimated_wait_time
         ))
@@ -142,7 +144,7 @@ async def create_customer(customer: CustomerBase):
         return Customer(
             id=customer_id,
             name=customer.name,
-            phone_number=customer.phone_number,
+            phone_number=cleaned_phone,
             token_number=token_number,
             service_type=customer.service_type,
             status='waiting',
